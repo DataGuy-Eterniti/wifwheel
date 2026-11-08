@@ -1,5 +1,12 @@
 """Offline tests for scanner.py. A fake chain serves contract code and Transfer logs like the real RPC."""
+import pytest
+
 import scanner
+
+
+@pytest.fixture(autouse=True)
+def _no_sleep(monkeypatch):
+    monkeypatch.setattr(scanner.time, "sleep", lambda *_: None)
 
 TOKEN = "0x" + "ab" * 20
 OWNER = "0x" + "11" * 20
@@ -53,6 +60,9 @@ class FakeChain(scanner.Chain):
         return t
 
     def rpc(self, method, params, url=None):
+        if getattr(self, "fail_first", 0) and method == "eth_getLogs":
+            self.fail_first -= 1
+            return {"__error__": {"code": 429, "message": "Too Many Requests"}}
         if method == "eth_getStorageAt":
             return word(ZERO)
         if method == "eth_getLogs":
@@ -147,3 +157,12 @@ def test_create_address_matches_known_vector():
 def test_bad_address():
     rep = scanner.scan("hello", chain=FakeChain(rug=False))
     assert rep.findings[0].key == "bad_address"
+
+
+def test_rate_limit_is_retried_not_split(monkeypatch):
+    monkeypatch.setattr(scanner.time, "sleep", lambda *_: None)
+    fc = FakeChain(rug=True)
+    fc.fail_first = 2
+    rep = scanner.scan(TOKEN, chain=fc)
+    assert rep.facts.get("transfers"), rep.not_checked
+    assert "cluster" in kinds(rep)

@@ -154,19 +154,30 @@ class Chain:
         return self.ok("eth_getTransactionByHash", [h])
 
     def logs(self, token, frm, to):
-        """All Transfer logs of `token` in [frm, to]; splits the range when the RPC refuses it."""
+        """All Transfer logs of `token` in [frm, to].
+        Range/size errors -> split the range. Rate limits or network errors -> wait and retry.
+        Returns (logs, None) or (None, error_message)."""
         out, stack = [], [(frm, to)]
         while stack:
             a, b = stack.pop()
-            r = self.rpc("eth_getLogs", [{"address": token, "topics": [TRANSFER], "fromBlock": hex(a), "toBlock": hex(b)}])
-            if isinstance(r, list):
-                out.extend(r)
-            elif b > a:
-                mid = (a + b) // 2
-                stack += [(mid + 1, b), (a, mid)]
+            q = [{"address": token, "topics": [TRANSFER], "fromBlock": hex(a), "toBlock": hex(b)}]
+            for attempt in range(5):
+                r = self.rpc("eth_getLogs", q)
+                if isinstance(r, list):
+                    out.extend(r)
+                    break
+                msg = str((r or {}).get("__error__", r)).lower()
+                too_big = any(k in msg for k in ("range", "spans", "too many results", "more than", "exceed", "limit", "narrow"))
+                rate = any(k in msg for k in ("rate", "429", "too many requests", "timeout", "timed out", "connection", "busy"))
+                if too_big and not rate and b > a:
+                    mid = (a + b) // 2
+                    stack += [(mid + 1, b), (a, mid)]
+                    break
+                time.sleep(1.5 * (attempt + 1))
             else:
-                return None
-        return out
+                return None, msg[:200]
+            time.sleep(0.25)   # be gentle with the free public RPC
+        return out, None
 
     def dex(self, token):
         try:
@@ -244,9 +255,9 @@ def load_transfers(c: Chain, addr, rep: Report):
     start = 0
     while start <= latest:
         end = min(latest, start + LOG_SPAN - 1)
-        chunk = c.logs(addr, start, end)
+        chunk, err = c.logs(addr, start, end)
         if chunk is None:
-            rep.not_checked.append("Transfer history (RPC refused the request)")
+            rep.not_checked.append(f"Transfer history (RPC error at blocks {start}-{end}: {err})")
             return None
         logs.extend(chunk)
         start = end + 1
