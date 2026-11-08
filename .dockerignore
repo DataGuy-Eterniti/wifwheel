@@ -1,8 +1,0 @@
-.env
-.venv/
-data/
-__pycache__/
-*.pyc
-.git/
-cloudflared.exe
-*.xlsx
