@@ -340,7 +340,7 @@ async function loadRegister() {
     if (!r.configured) { $("register").textContent = "The register appears once the contract is deployed."; return; }
     const d = v => Number(ethers.formatUnits(v || "0", dec)).toLocaleString(undefined, { maximumFractionDigits: 1 });
     $("sChecks").textContent = r.stats.total_checks; $("sBurned").textContent = d(r.stats.total_burned); $("sPool").textContent = d(r.stats.reward_pool);
-    lastReports = r.reports;
+    lastReports = r.reports; renderCurator();
     $("register").innerHTML = r.reports.length ? `<table><tr><th>Token</th><th>Status</th><th>Evidence</th></tr>${r.reports.map(x => `
       <tr><td class="mono"><a href="${esc(CFG.scan_explorer)}/token/${esc(x.token)}" target="_blank" rel="noopener">${esc(short(x.token))}</a></td>
       <td><span class="st ${esc(x.status)}">${esc(x.status)}</span></td>
@@ -349,12 +349,16 @@ async function loadRegister() {
   } catch (e) { $("register").textContent = "Could not load the register."; }
 }
 
+let isCurator = false;
 async function maybeCurator() {
   if (!wheel || !account) return;
-  const cur = (await wheel.curator()).toLowerCase();
-  if (cur !== account) return;
+  isCurator = (await wheel.curator()).toLowerCase() === account;
+  if (!isCurator) return;
   $("curator").classList.remove("hidden");
   await loadRegister();
+}
+function renderCurator() {
+  if (!isCurator) return;
   const open = lastReports.filter(r => r.status === "open");
   $("curatorList").innerHTML = open.length ? open.map(r => `<div class="finding"><div class="sev medium">#${r.id}</div><div>
     <b class="mono">${esc(r.token)}</b><p>${esc(r.evidence)}</p>
@@ -380,6 +384,7 @@ $("faucetBtn").addEventListener("click", faucet);
   CFG = await api("/api/config");
   if (!CFG.mock_wif) $("netpill").innerHTML = "Payments: <b>$WIF on Robinhood Chain</b>";
   await loadContracts(); loadRegister();
+  try { if (window.ethereum && (await window.ethereum.request({ method: "eth_accounts" })).length) await connect(); } catch (_) {}
   const q = new URLSearchParams(location.search).get("token"); if (q) { $("addr").value = q; check(); }
 })();
 </script>
