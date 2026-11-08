@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WifWheel · rug check for Robinhood Chain</title>
+<meta name="description" content="Paste a Robinhood Chain token address and see whether it looks like a rug, with onchain evidence. Powered by $WIF.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0E1117; --panel: #161B24; --panel2: #1D2430; --line: #2A3342; --text: #EEF1F5; --muted: #98A2B3;
+    --accent: #C6F432; --accent-ink: #141A05; --high: #F06D6D; --med: #F2B84B; --low: #8FB6FF; --ok: #5DD39E;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: radial-gradient(1000px 500px at 80% -10%, rgba(198,244,50,.08), transparent 60%), var(--bg);
+    color: var(--text); font: 15px/1.55 Inter, system-ui, sans-serif; }
+  a { color: var(--accent); }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 20px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .logo { font: 700 22px "Space Grotesk", sans-serif; letter-spacing: -.01em; }
+  .logo span { color: var(--accent); }
+  .pill { font-size: 12.5px; border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; color: var(--muted); }
+  .pill b { color: var(--med); font-weight: 600; }
+  .btn { border: 0; border-radius: 12px; padding: 11px 18px; font: 600 15px Inter, sans-serif; cursor: pointer; }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); }
+  .btn.ghost { background: var(--panel2); color: var(--text); border: 1px solid var(--line); }
+  .btn[disabled] { opacity: .55; cursor: wait; }
+  .hero { padding: 54px 0 26px; }
+  h1 { font: 700 clamp(34px, 5.4vw, 58px)/1.04 "Space Grotesk", sans-serif; letter-spacing: -.02em; margin: 0 0 14px; max-width: 760px; }
+  h1 em { font-style: normal; color: var(--accent); }
+  .lede { color: var(--muted); font-size: 17px; max-width: 640px; margin: 0 0 26px; }
+  .search { display: flex; gap: 10px; flex-wrap: wrap; }
+  .search input { flex: 1 1 360px; min-width: 0; background: var(--panel); border: 1px solid var(--line); color: var(--text);
+    border-radius: 12px; padding: 13px 15px; font: 15px ui-monospace, Menlo, monospace; }
+  .search input:focus { outline: none; border-color: var(--accent); }
+  .examples { margin-top: 10px; font-size: 13px; color: var(--muted); }
+  .examples button { background: none; border: 0; color: var(--accent); cursor: pointer; font: inherit; padding: 0 4px; }
+  .err { color: var(--high); min-height: 20px; margin-top: 8px; font-size: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 22px; margin-top: 18px; }
+  .card h2 { font: 700 20px "Space Grotesk", sans-serif; margin: 0 0 12px; }
+  .vhead { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+  .tname { font: 700 22px "Space Grotesk", sans-serif; } .taddr { color: var(--muted); font: 13px ui-monospace, monospace; word-break: break-all; }
+  .verdict { font: 700 22px "Space Grotesk", sans-serif; padding: 8px 14px; border-radius: 12px; }
+  .v-high { background: rgba(240,109,109,.14); color: var(--high); } .v-caution { background: rgba(242,184,75,.14); color: var(--med); }
+  .v-ok { background: rgba(93,211,158,.13); color: var(--ok); }
+  .bar { height: 8px; background: var(--panel2); border-radius: 99px; margin: 14px 0 6px; overflow: hidden; }
+  .bar i { display: block; height: 100%; border-radius: 99px; }
+  .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 16px 0; }
+  .fact { background: var(--panel2); border-radius: 12px; padding: 10px 12px; } .fact b { display: block; font-size: 18px; } .fact span { color: var(--muted); font-size: 12.5px; }
+  .finding { border-top: 1px solid var(--line); padding: 12px 0; display: grid; grid-template-columns: 76px 1fr; gap: 10px; }
+  .sev { font-size: 11.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; padding-top: 3px; }
+  .sev.high { color: var(--high); } .sev.medium { color: var(--med); } .sev.low { color: var(--low); }
+  .finding b { display: block; } .finding p { margin: 2px 0 0; color: #C9D0DB; } .finding a { font-size: 13px; }
+  .notchecked { color: var(--muted); font-size: 13px; margin-top: 10px; }
+  .deepbox { margin-top: 16px; background: var(--panel2); border: 1px dashed var(--line); border-radius: 14px; padding: 14px; display: flex;
+    justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 820px) { .grid2 { grid-template-columns: 1fr; } }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
+  .field { width: 100%; background: var(--bg); border: 1px solid var(--line); color: var(--text); border-radius: 10px; padding: 10px 12px; font: 14px Inter, sans-serif; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; } th, td { text-align: left; padding: 8px 6px; border-top: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 500; } td.mono { font-family: ui-monospace, monospace; font-size: 12.5px; }
+  .st { font-size: 12px; padding: 2px 8px; border-radius: 99px; } .st.open { background: rgba(242,184,75,.14); color: var(--med); }
+  .st.confirmed { background: rgba(240,109,109,.14); color: var(--high); } .st.rejected { background: var(--panel2); color: var(--muted); }
+  .flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; } @media (max-width: 820px) { .flow { grid-template-columns: 1fr 1fr; } }
+  .step { background: var(--panel2); border-radius: 14px; padding: 14px; } .step b { color: var(--accent); font: 700 22px "Space Grotesk", sans-serif; }
+  .step p { margin: 6px 0 0; color: #C9D0DB; font-size: 14px; }
+  .note { color: var(--muted); font-size: 12.5px; } .hidden { display: none; }
+  .toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--panel2); border: 1px solid var(--line);
+    padding: 10px 16px; border-radius: 12px; font-size: 14px; max-width: 92vw; }
+  footer { color: var(--muted); font-size: 12.5px; margin: 40px 0 10px; }
+  .spin { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--muted); border-top-color: transparent; border-radius: 50%;
+    animation: s .8s linear infinite; vertical-align: -2px; margin-right: 6px; } @keyframes s { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">Wif<span>Wheel</span></div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <span class="pill" id="netpill">Payments: <b>testnet demo · mock $WIF</b></span>
+      <span class="pill hidden" id="balpill"></span>
+      <button class="btn ghost hidden" id="faucetBtn">Get test $WIF</button>
+      <button class="btn primary" id="connectBtn">Connect wallet</button>
+    </div>
+  </header>
+
+  <section class="hero">
+    <h1>Is this token a <em>rug</em>? Check before you buy.</h1>
+    <p class="lede">Paste any Robinhood Chain token address. WifWheel reads the chain and shows you the red flags (owner powers, linked wallets, launch snipers, serial launchers, thin liquidity) with evidence you can click.</p>
+    <div class="search">
+      <input id="addr" placeholder="0x… token address" autocomplete="off" spellcheck="false">
+      <button class="btn primary" id="checkBtn">Check token</button>
+    </div>
+    <div class="examples">Try: <button data-a="0x5173b8eA6923c2d40267890D45C46a3480954773">$WIF</button></div>
+    <div class="err" id="err"></div>
+  </section>
+
+  <div id="result"></div>
+
+  <section class="card">
+    <h2>How the $WIF wheel turns</h2>
+    <div class="flow">
+      <div class="step"><b>1</b><p>Quick checks are free. A <strong>deep check</strong> costs a little $WIF.</p></div>
+      <div class="step"><b>2</b><p>Half of every fee is <strong>burned</strong>, half goes to the <strong>reward pool</strong>.</p></div>
+      <div class="step"><b>3</b><p>Spot a scam? <strong>Stake $WIF</strong> to report it. Confirmed reports earn a reward.</p></div>
+      <div class="step"><b>4</b><p>Every confirmed report grows the <strong>public scam register</strong>, which makes checks better.</p></div>
+    </div>
+  </section>
+
+  <div class="grid2">
+    <section class="card">
+      <h2>Report a scam token</h2>
+      <p class="note">You stake <span id="stakeAmt">…</span> $WIF. If the curator confirms it, you get your stake back plus a reward. Spam reports lose their stake.</p>
+      <label for="rToken">Token address</label><input class="field" id="rToken" placeholder="0x…">
+      <label for="rEvidence">Evidence (link to the explorer, a thread, or the scan result)</label><input class="field" id="rEvidence" placeholder="https://…">
+      <div style="margin-top:14px"><button class="btn primary" id="reportBtn">Stake and report</button></div>
+    </section>
+    <section class="card">
+      <h2>Public scam register</h2>
+      <div class="stats">
+        <div class="fact"><b id="sChecks">–</b><span>deep checks paid</span></div>
+        <div class="fact"><b id="sBurned">–</b><span>$WIF burned</span></div>
+        <div class="fact"><b id="sPool">–</b><span>$WIF reward pool</span></div>
+      </div>
+      <div id="register" class="note">Loading…</div>
+    </section>
+  </div>
+
+  <section class="card hidden" id="curator">
+    <h2>Curator</h2>
+    <p class="note">Only the curator wallet sees this. Confirm a report only when the evidence shows a real scam.</p>
+    <div id="curatorList"></div>
+  </section>
+
+  <footer>WifWheel never says a token is "safe". It shows what it found and what it could not check. Not financial advice. Payments in this demo use a mock $WIF on Robinhood Chain testnet; token checks read mainnet. Not affiliated with Robinhood Markets, Inc. · <a href="https://github.com/DataGuy-Eterniti/wifwheel">Source (MIT)</a></footer>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.2/ethers.umd.min.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const short = a => a ? a.slice(0, 6) + "…" + a.slice(-4) : "";
+const WHEEL_ABI = [
+  "function payForCheck(address token) returns (uint256)",
+  "function submitReport(address token, string evidence) returns (uint256)",
+  "function resolveReport(uint256 id, bool confirmed)",
+  "function checkFee() view returns (uint256)", "function reportStake() view returns (uint256)", "function curator() view returns (address)",
+];
+const WIF_ABI = ["function approve(address,uint256) returns (bool)", "function allowance(address,address) view returns (uint256)",
+  "function balanceOf(address) view returns (uint256)", "function decimals() view returns (uint8)", "function mint(address,uint256)"];
+let CFG, provider, signer, account, wheel, wif, dec = 18, fee, stake, current;
+
+function toast(msg, ms = 4000) {
+  const t = document.createElement("div"); t.className = "toast"; t.textContent = msg; document.body.appendChild(t);
+  setTimeout(() => t.remove(), ms);
+}
+const fmt = v => Number(ethers.formatUnits(v, dec)).toLocaleString(undefined, { maximumFractionDigits: 2 });
+
+async function api(path, body) {
+  const r = await fetch(path, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.detail || "Request failed");
+  return j;
+}
+
+/* ---------------- results ---------------- */
+function render(rep) {
+  current = rep;
+  const vclass = rep.verdict === "HIGH RISK" ? "v-high" : rep.verdict === "CAUTION" ? "v-caution" : "v-ok";
+  const color = rep.score >= 60 ? "var(--high)" : rep.score >= 20 ? "var(--med)" : "var(--ok)";
+  const f = rep.facts || {};
+  const pct = v => v == null ? "–" : (v * 100).toFixed(1) + "%";
+  const facts = [
+    [f.holders != null ? Number(f.holders).toLocaleString() : "–", "holders"], [f.transfers != null ? Number(f.transfers).toLocaleString() : "–", "transfers"],
+    [f.liquidity_usd != null ? "$" + Number(f.liquidity_usd).toLocaleString() : "–", "liquidity"],
+    [pct(f.top10_wallet_share), "held by top 10 wallets"], [f.early_buyers ?? "–", "wallets in first ~5 s"],
+  ];
+  const findings = rep.findings.length ? rep.findings.map(x => `
+    <div class="finding"><div class="sev ${x.severity}">${esc(x.severity)}</div>
+      <div><b>${esc(x.title)}</b><p>${esc(x.detail)}</p>${x.evidence ? `<a href="${esc(x.evidence)}" target="_blank" rel="noopener">Evidence ↗</a>` : ""}</div></div>`).join("")
+    : `<p class="note">No red flags in what was checked.</p>`;
+  const deepBox = rep.deep ? `<p class="note">Deep check · ${new Date(rep.checked_at * 1000).toLocaleString()}</p>` : `
+    <div class="deepbox"><div><b>Run a deep check</b><div class="note">Linked wallets, launch snipers, holder concentration and the launcher's history. Costs ${fee ? fmt(fee) : "…"} $WIF: half burned, half to the reward pool.</div></div>
+    <button class="btn primary" id="deepBtn">Pay ${fee ? fmt(fee) : ""} $WIF and run</button></div>`;
+  $("result").innerHTML = `<section class="card">
+    <div class="vhead"><div><div class="tname">${esc(rep.name || "Unknown token")} ${rep.symbol ? "(" + esc(rep.symbol) + ")" : ""}</div>
+      <div class="taddr">${esc(rep.address)}</div></div><div class="verdict ${vclass}">${esc(rep.verdict)}</div></div>
+    <div class="bar"><i style="width:${rep.score}%;background:${color}"></i></div><div class="note">Risk score ${rep.score}/100</div>
+    <div class="facts">${facts.map(([b, s]) => `<div class="fact"><b>${esc(b)}</b><span>${esc(s)}</span></div>`).join("")}</div>
+    ${findings}
+    ${rep.not_checked?.length ? `<div class="notchecked"><b>Not checked:</b> ${rep.not_checked.map(esc).join(" · ")}</div>` : ""}
+    ${deepBox}
+    <p class="note" style="margin-top:12px"><a href="${esc(rep.explorer)}" target="_blank" rel="noopener">Open in explorer ↗</a> · <a href="#" id="reportThis">Report this token</a></p>
+  </section>`;
+  $("deepBtn")?.addEventListener("click", runDeep);
+  $("reportThis").addEventListener("click", e => { e.preventDefault(); $("rToken").value = rep.address; $("rEvidence").focus(); });
+}
+
+async function check() {
+  const a = $("addr").value.trim(); $("err").textContent = "";
+  if (!/^0x[0-9a-fA-F]{40}$/.test(a)) { $("err").textContent = "Paste a 0x… token address (42 characters)."; return; }
+  $("checkBtn").disabled = true; $("checkBtn").innerHTML = '<span class="spin"></span>Checking';
+  try { render(await api("/api/check", { address: a })); }
+  catch (e) { $("err").textContent = e.message; }
+  finally { $("checkBtn").disabled = false; $("checkBtn").textContent = "Check token"; }
+}
+
+/* ---------------- wallet ---------------- */
+async function connect() {
+  if (!window.ethereum) { toast("Install a wallet such as MetaMask to pay and report."); return; }
+  provider = new ethers.BrowserProvider(window.ethereum);
+  await provider.send("eth_requestAccounts", []);
+  const hex = "0x" + CFG.chain_id.toString(16);
+  try { await provider.send("wallet_switchEthereumChain", [{ chainId: hex }]); }
+  catch (e) {
+    await provider.send("wallet_addEthereumChain", [{ chainId: hex, chainName: CFG.chain_name, rpcUrls: [CFG.rpc],
+      nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 }, blockExplorerUrls: [CFG.explorer] }]);
+  }
+  provider = new ethers.BrowserProvider(window.ethereum);
+  signer = await provider.getSigner(); account = (await signer.getAddress()).toLowerCase();
+  $("connectBtn").textContent = short(account);
+  await loadContracts(); await refreshBalance(); await maybeCurator();
+  if (CFG.mock_wif) $("faucetBtn").classList.remove("hidden");
+  if (current) render(current);
+}
+
+async function loadContracts() {
+  if (!CFG.wifwheel) return;
+  const runner = signer || new ethers.JsonRpcProvider(CFG.rpc);
+  wheel = new ethers.Contract(CFG.wifwheel, WHEEL_ABI, runner);
+  wif = new ethers.Contract(CFG.wif, WIF_ABI, runner);
+  try { dec = Number(await wif.decimals()); fee = await wheel.checkFee(); stake = await wheel.reportStake(); $("stakeAmt").textContent = fmt(stake); } catch (_) {}
+}
+
+async function refreshBalance() {
+  if (!account || !wif) return;
+  const b = await wif.balanceOf(account);
+  $("balpill").textContent = fmt(b) + (CFG.mock_wif ? " test $WIF" : " $WIF"); $("balpill").classList.remove("hidden");
+}
+
+async function ensureAllowance(amount) {
+  const have = await wif.allowance(account, CFG.wifwheel);
+  if (have >= amount) return;
+  toast("Approve $WIF spending in your wallet…");
+  await (await wif.approve(CFG.wifwheel, amount)).wait();
+}
+
+async function needWallet() {
+  if (!CFG.wifwheel) { toast("Payments are not configured on this server yet."); return false; }
+  if (!signer) await connect();
+  return !!signer;
+}
+
+async function runDeep() {
+  if (!(await needWallet())) return;
+  const btn = $("deepBtn"); btn.disabled = true;
+  try {
+    await ensureAllowance(fee);
+    btn.innerHTML = '<span class="spin"></span>Confirm payment in wallet';
+    const tx = await wheel.payForCheck(current.address);
+    btn.innerHTML = '<span class="spin"></span>Waiting for the transaction';
+    await tx.wait();
+    await refreshBalance();
+    const { job } = await api("/api/deep", { address: current.address, tx: tx.hash });
+    for (;;) {
+      const j = await api("/api/job/" + job);
+      if (j.status === "done") { render(j.result); toast("Deep check complete."); break; }
+      if (j.status === "error") throw new Error(j.error || "Deep check failed");
+      btn.innerHTML = `<span class="spin"></span>Reading the chain… ${Math.round(j.elapsed)} s`;
+      await new Promise(r => setTimeout(r, 2500));
+    }
+    loadRegister();
+  } catch (e) { toast(e.shortMessage || e.message, 6000); btn.disabled = false; btn.textContent = "Try again"; }
+}
+
+async function report() {
+  const token = $("rToken").value.trim(), ev = $("rEvidence").value.trim();
+  if (!/^0x[0-9a-fA-F]{40}$/.test(token)) { toast("Enter a valid token address."); return; }
+  if (!/^https?:\/\//.test(ev)) { toast("Add a link to your evidence."); return; }
+  if (!(await needWallet())) return;
+  const btn = $("reportBtn"); btn.disabled = true;
+  try {
+    await ensureAllowance(stake);
+    btn.innerHTML = '<span class="spin"></span>Confirm in wallet';
+    await (await wheel.submitReport(token, ev)).wait();
+    toast("Report submitted. The curator will review it."); $("rEvidence").value = "";
+    refreshBalance(); loadRegister(); maybeCurator();
+  } catch (e) { toast(e.shortMessage || e.message, 6000); }
+  finally { btn.disabled = false; btn.textContent = "Stake and report"; }
+}
+
+async function faucet() {
+  try {
+    toast("Minting 1,000 test $WIF to your wallet…");
+    await (await wif.mint(account, ethers.parseUnits("1000", dec))).wait();
+    refreshBalance(); toast("1,000 test $WIF added.");
+  } catch (e) { toast(e.shortMessage || e.message, 6000); }
+}
+
+/* ---------------- register + curator ---------------- */
+let lastReports = [];
+async function loadRegister() {
+  try {
+    const r = await api("/api/register");
+    if (!r.configured) { $("register").textContent = "The register appears once the contract is deployed."; return; }
+    const d = v => Number(ethers.formatUnits(v || "0", dec)).toLocaleString(undefined, { maximumFractionDigits: 1 });
+    $("sChecks").textContent = r.stats.total_checks; $("sBurned").textContent = d(r.stats.total_burned); $("sPool").textContent = d(r.stats.reward_pool);
+    lastReports = r.reports;
+    $("register").innerHTML = r.reports.length ? `<table><tr><th>Token</th><th>Status</th><th>Evidence</th></tr>${r.reports.map(x => `
+      <tr><td class="mono"><a href="${esc(CFG.scan_explorer)}/token/${esc(x.token)}" target="_blank" rel="noopener">${esc(short(x.token))}</a></td>
+      <td><span class="st ${esc(x.status)}">${esc(x.status)}</span></td>
+      <td>${/^https?:\/\//.test(x.evidence) ? `<a href="${esc(x.evidence)}" target="_blank" rel="noopener nofollow">link ↗</a>` : esc(x.evidence)}</td></tr>`).join("")}</table>`
+      : "No reports yet. Be the first to report a scam.";
+  } catch (e) { $("register").textContent = "Could not load the register."; }
+}
+
+async function maybeCurator() {
+  if (!wheel || !account) return;
+  const cur = (await wheel.curator()).toLowerCase();
+  if (cur !== account) return;
+  $("curator").classList.remove("hidden");
+  await loadRegister();
+  const open = lastReports.filter(r => r.status === "open");
+  $("curatorList").innerHTML = open.length ? open.map(r => `<div class="finding"><div class="sev medium">#${r.id}</div><div>
+    <b class="mono">${esc(r.token)}</b><p>${esc(r.evidence)}</p>
+    <button class="btn primary" data-id="${r.id}" data-ok="1">Confirm scam</button> <button class="btn ghost" data-id="${r.id}" data-ok="0">Reject</button></div></div>`).join("")
+    : '<p class="note">No open reports.</p>';
+}
+$("curatorList").addEventListener("click", async e => {
+  const b = e.target.closest("button[data-id]"); if (!b) return;
+  b.disabled = true;
+  try { await (await wheel.resolveReport(BigInt(b.dataset.id), b.dataset.ok === "1")).wait(); toast("Report resolved."); loadRegister(); maybeCurator(); }
+  catch (err) { toast(err.shortMessage || err.message, 6000); b.disabled = false; }
+});
+
+/* ---------------- boot ---------------- */
+$("checkBtn").addEventListener("click", check);
+$("addr").addEventListener("keydown", e => { if (e.key === "Enter") check(); });
+document.querySelectorAll(".examples button").forEach(b => b.addEventListener("click", () => { $("addr").value = b.dataset.a; check(); }));
+$("connectBtn").addEventListener("click", connect);
+$("reportBtn").addEventListener("click", report);
+$("faucetBtn").addEventListener("click", faucet);
+(async () => {
+  CFG = await api("/api/config");
+  if (!CFG.mock_wif) $("netpill").innerHTML = "Payments: <b>$WIF on Robinhood Chain</b>";
+  await loadContracts(); loadRegister();
+  const q = new URLSearchParams(location.search).get("token"); if (q) { $("addr").value = q; check(); }
+})();
+</script>
+</body>
+</html>
