@@ -166,3 +166,11 @@ def test_rate_limit_is_retried_not_split(monkeypatch):
     rep = scanner.scan(TOKEN, chain=fc)
     assert rep.facts.get("transfers"), rep.not_checked
     assert "cluster" in kinds(rep)
+
+
+def test_persistent_rate_limit_marks_check_incomplete(monkeypatch):
+    fc = FakeChain(rug=False)
+    fc.fail_first = 999
+    rep = scanner.scan(TOKEN, chain=fc)
+    assert rep.verdict == "INCOMPLETE CHECK"
+    assert rep.facts.get("incomplete") is True

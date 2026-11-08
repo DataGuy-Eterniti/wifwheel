@@ -151,6 +151,7 @@ const WHEEL_ABI = [
 ];
 const WIF_ABI = ["function approve(address,uint256) returns (bool)", "function allowance(address,address) view returns (uint256)",
   "function balanceOf(address) view returns (uint256)", "function decimals() view returns (uint8)", "function mint(address,uint256)"];
+const paidTx = {};
 let CFG, provider, signer, account, wheel, wif, dec = 18, fee, stake, current;
 
 function toast(msg, ms = 4000) {
@@ -169,7 +170,7 @@ async function api(path, body) {
 /* ---------------- results ---------------- */
 function render(rep) {
   current = rep;
-  const vclass = rep.verdict === "HIGH RISK" ? "v-high" : rep.verdict === "CAUTION" ? "v-caution" : "v-ok";
+  const vclass = rep.verdict === "HIGH RISK" ? "v-high" : (rep.verdict === "CAUTION" || rep.verdict === "INCOMPLETE CHECK") ? "v-caution" : "v-ok";
   const color = rep.score >= 60 ? "var(--high)" : rep.score >= 20 ? "var(--med)" : "var(--ok)";
   const f = rep.facts || {};
   const pct = v => v == null ? "–" : (v * 100).toFixed(1) + "%";
@@ -241,6 +242,27 @@ async function refreshBalance() {
   $("balpill").textContent = fmt(b) + (CFG.mock_wif ? " test $WIF" : " $WIF"); $("balpill").classList.remove("hidden");
 }
 
+function errMsg(e) {
+  const inner = e?.info?.error?.message || e?.error?.message || e?.data?.message || e?.info?.payload && JSON.stringify(e.info.error || "");
+  if (e?.code === "ACTION_REJECTED" || /user (rejected|denied)/i.test(String(e?.message))) return "You cancelled it in MetaMask.";
+  if (/insufficient funds/i.test(inner || e?.message || "")) return "This account has no test ETH for gas. Get some from faucet.testnet.chain.robinhood.com.";
+  return inner ? `Wallet error: ${inner}` : (e?.shortMessage || e?.message || "Something went wrong.");
+}
+
+async function preflight(amount, what) {
+  const net = await provider.getNetwork();
+  if (Number(net.chainId) !== CFG.chain_id) {
+    try { await provider.send("wallet_switchEthereumChain", [{ chainId: "0x" + CFG.chain_id.toString(16) }]); }
+    catch (_) { throw new Error(`Switch MetaMask to ${CFG.chain_name} and try again.`); }
+    location.reload(); throw new Error("Switched network, reloading…");
+  }
+  if (fee == null || stake == null) await loadContracts();
+  const eth = await provider.getBalance(account);
+  if (eth === 0n) throw new Error(`The connected account (${short(account)}) has no test ETH for gas. Get some from faucet.testnet.chain.robinhood.com, or switch MetaMask to the deployer account.`);
+  const bal = await wif.balanceOf(account);
+  if (bal < amount) throw new Error(`The connected account (${short(account)}) has ${fmt(bal)} test $WIF but ${what} needs ${fmt(amount)}. Click "Get test $WIF" or switch to the deployer account.`);
+}
+
 async function ensureAllowance(amount) {
   const have = await wif.allowance(account, CFG.wifwheel);
   if (have >= amount) return;
@@ -257,23 +279,32 @@ async function needWallet() {
 async function runDeep() {
   if (!(await needWallet())) return;
   const btn = $("deepBtn"); btn.disabled = true;
+  const key = current.address.toLowerCase();
   try {
-    await ensureAllowance(fee);
-    btn.innerHTML = '<span class="spin"></span>Confirm payment in wallet';
-    const tx = await wheel.payForCheck(current.address);
-    btn.innerHTML = '<span class="spin"></span>Waiting for the transaction';
-    await tx.wait();
-    await refreshBalance();
-    const { job } = await api("/api/deep", { address: current.address, tx: tx.hash });
+    let hash = paidTx[key];
+    if (!hash) {
+      await preflight(fee, "a deep check");
+      await ensureAllowance(fee);
+      btn.innerHTML = '<span class="spin"></span>Confirm payment in wallet';
+      const tx = await wheel.payForCheck(current.address);
+      btn.innerHTML = '<span class="spin"></span>Waiting for the transaction';
+      await tx.wait();
+      hash = paidTx[key] = tx.hash;
+      await refreshBalance();
+    }
+    const { job } = await api("/api/deep", { address: current.address, tx: hash });
     for (;;) {
       const j = await api("/api/job/" + job);
-      if (j.status === "done") { render(j.result); toast("Deep check complete."); break; }
+      if (j.status === "done") { delete paidTx[key]; render(j.result); toast("Deep check complete."); break; }
       if (j.status === "error") throw new Error(j.error || "Deep check failed");
       btn.innerHTML = `<span class="spin"></span>Reading the chain… ${Math.round(j.elapsed)} s`;
       await new Promise(r => setTimeout(r, 2500));
     }
     loadRegister();
-  } catch (e) { toast(e.shortMessage || e.message, 6000); btn.disabled = false; btn.textContent = "Try again"; }
+  } catch (e) {
+    toast(errMsg(e), 12000); btn.disabled = false;
+    btn.textContent = paidTx[key] ? "Try again (already paid)" : "Try again";
+  }
 }
 
 async function report() {
@@ -283,12 +314,13 @@ async function report() {
   if (!(await needWallet())) return;
   const btn = $("reportBtn"); btn.disabled = true;
   try {
+    await preflight(stake, "a report");
     await ensureAllowance(stake);
     btn.innerHTML = '<span class="spin"></span>Confirm in wallet';
     await (await wheel.submitReport(token, ev)).wait();
     toast("Report submitted. The curator will review it."); $("rEvidence").value = "";
     refreshBalance(); loadRegister(); maybeCurator();
-  } catch (e) { toast(e.shortMessage || e.message, 6000); }
+  } catch (e) { toast(errMsg(e), 9000); }
   finally { btn.disabled = false; btn.textContent = "Stake and report"; }
 }
 
@@ -297,7 +329,7 @@ async function faucet() {
     toast("Minting 1,000 test $WIF to your wallet…");
     await (await wif.mint(account, ethers.parseUnits("1000", dec))).wait();
     refreshBalance(); toast("1,000 test $WIF added.");
-  } catch (e) { toast(e.shortMessage || e.message, 6000); }
+  } catch (e) { toast(errMsg(e), 9000); }
 }
 
 /* ---------------- register + curator ---------------- */
@@ -333,14 +365,15 @@ $("curatorList").addEventListener("click", async e => {
   const b = e.target.closest("button[data-id]"); if (!b) return;
   b.disabled = true;
   try { await (await wheel.resolveReport(BigInt(b.dataset.id), b.dataset.ok === "1")).wait(); toast("Report resolved."); loadRegister(); maybeCurator(); }
-  catch (err) { toast(err.shortMessage || err.message, 6000); b.disabled = false; }
+  catch (err) { toast(errMsg(err), 9000); b.disabled = false; }
 });
 
 /* ---------------- boot ---------------- */
 $("checkBtn").addEventListener("click", check);
 $("addr").addEventListener("keydown", e => { if (e.key === "Enter") check(); });
 document.querySelectorAll(".examples button").forEach(b => b.addEventListener("click", () => { $("addr").value = b.dataset.a; check(); }));
-$("connectBtn").addEventListener("click", connect);
+$("connectBtn").addEventListener("click", () => connect().catch(e => toast(errMsg(e), 9000)));
+if (window.ethereum?.on) { window.ethereum.on("accountsChanged", () => location.reload()); window.ethereum.on("chainChanged", () => location.reload()); }
 $("reportBtn").addEventListener("click", report);
 $("faucetBtn").addEventListener("click", faucet);
 (async () => {

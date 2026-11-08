@@ -43,7 +43,8 @@ ALCHEMY_KEY = os.getenv("ALCHEMY_KEY", "").strip()
 DEXSCREENER = "https://api.dexscreener.com/latest/dex/tokens/"
 TIMEOUT = 40
 LOG_SPAN = int(os.getenv("LOG_SPAN", "10000000"))   # public RPC limit per eth_getLogs
-EARLY_BLOCKS = 50                                    # ~5 seconds after the first transfer at 0.1 s blocks
+EARLY_BLOCKS = 50
+RETRIES = int(os.getenv("RPC_RETRIES", "8"))                                    # ~5 seconds after the first transfer at 0.1 s blocks
 
 TRANSFER = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 ZERO = "0x" + "0" * 40
@@ -161,7 +162,7 @@ class Chain:
         while stack:
             a, b = stack.pop()
             q = [{"address": token, "topics": [TRANSFER], "fromBlock": hex(a), "toBlock": hex(b)}]
-            for attempt in range(5):
+            for attempt in range(RETRIES):
                 r = self.rpc("eth_getLogs", q)
                 if isinstance(r, list):
                     out.extend(r)
@@ -173,7 +174,7 @@ class Chain:
                     mid = (a + b) // 2
                     stack += [(mid + 1, b), (a, mid)]
                     break
-                time.sleep(1.5 * (attempt + 1))
+                time.sleep(min(20, 1.5 * 2 ** attempt) if rate else 1.5 * (attempt + 1))
             else:
                 return None, msg[:200]
             time.sleep(0.25)   # be gentle with the free public RPC
@@ -258,6 +259,7 @@ def load_transfers(c: Chain, addr, rep: Report):
         chunk, err = c.logs(addr, start, end)
         if chunk is None:
             rep.not_checked.append(f"Transfer history (RPC error at blocks {start}-{end}: {err})")
+            rep.facts["incomplete"] = True
             return None
         logs.extend(chunk)
         start = end + 1
@@ -465,6 +467,8 @@ def score(rep: Report):
         rep.verdict = "HIGH RISK"
     elif highs == 1 or rep.score >= 20:
         rep.verdict = "CAUTION"
+    elif rep.facts.get("incomplete"):
+        rep.verdict = "INCOMPLETE CHECK"
     else:
         rep.verdict = "NO MAJOR RED FLAGS FOUND"
     order = {"high": 0, "medium": 1, "low": 2, "info": 3}

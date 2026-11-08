@@ -73,3 +73,19 @@ def test_verify_payment_reads_checkpaid_log(monkeypatch):
 def test_index_served(client):
     r = client.get("/")
     assert r.status_code == 200 and "WifWheel" in r.text
+
+
+def test_incomplete_deep_scan_frees_payment_and_is_not_cached(client, monkeypatch):
+    monkeypatch.setattr(appmod, "verify_payment", lambda tx, t: (True, ""))
+    monkeypatch.setattr(appmod.scanner, "scan", lambda a, deep=True: {"address": a, "verdict": "INCOMPLETE CHECK", "score": 0,
+        "findings": [], "not_checked": ["Transfer history (429)"], "facts": {"incomplete": True}, "explorer": "x"})
+    import time
+    job = client.post("/api/deep", json={"address": TOKEN, "tx": TX}).json()["job"]
+    for _ in range(50):
+        j = client.get(f"/api/job/{job}").json()
+        if j["status"] != "running":
+            break
+        time.sleep(0.05)
+    assert j["status"] == "error" and j["retry"] is True
+    assert appmod.cache_get(TOKEN, True) is None
+    assert client.post("/api/deep", json={"address": TOKEN, "tx": TX}).status_code == 200   # same payment retries

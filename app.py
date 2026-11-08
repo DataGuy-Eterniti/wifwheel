@@ -86,7 +86,9 @@ def cache_get(addr, deep):
     try:
         if time.time() - os.path.getmtime(p) < CACHE_HOURS * 3600:
             with open(p, encoding="utf-8") as f:
-                return json.load(f)
+                res = json.load(f)
+            if not (res.get("facts") or {}).get("incomplete"):
+                return res
     except OSError:
         pass
     return None
@@ -102,7 +104,8 @@ def run_scan(addr, deep):
     result = scanner.to_dict(scanner.scan(addr, deep=deep))
     result["checked_at"] = int(time.time())
     result["deep"] = deep
-    cache_put(addr, deep, result)
+    if not result.get("facts", {}).get("incomplete"):
+        cache_put(addr, deep, result)
     return result
 
 
@@ -130,12 +133,24 @@ def verify_payment(tx, token):
     return False, "That transaction did not pay for a check of this token."
 
 
-def _deep_worker(job_id, addr):
+def _release(tx):
+    with _lock:
+        used_txs.discard(tx.lower())
+
+
+def _deep_worker(job_id, addr, tx):
     try:
         res = run_scan(addr, deep=True)
-        jobs[job_id].update(status="done", result=res)
+        if res.get("facts", {}).get("incomplete"):
+            _release(tx)   # the payment was not used up; the same transaction can retry
+            jobs[job_id].update(status="error", retry=True,
+                                error="The public RPC is rate-limiting us, so the transfer history could not be read. "
+                                      "Your payment is still valid: click Try again in a minute (no new payment needed).")
+        else:
+            jobs[job_id].update(status="done", result=res)
     except Exception as e:  # never leave a job hanging
-        jobs[job_id].update(status="error", error=str(e)[:200])
+        _release(tx)
+        jobs[job_id].update(status="error", retry=True, error="Deep check failed: " + str(e)[:200])
 
 
 # ------------------------------------------------------------------ routes
@@ -193,7 +208,7 @@ async def deep(request: Request):
         jobs[job_id] = {"status": "done", "address": addr, "result": cached, "started": time.time()}
     else:
         jobs[job_id] = {"status": "running", "address": addr, "started": time.time()}
-        threading.Thread(target=_deep_worker, args=(job_id, addr), daemon=True).start()
+        threading.Thread(target=_deep_worker, args=(job_id, addr, tx), daemon=True).start()
     return {"job": job_id}
 
 
@@ -207,6 +222,7 @@ def job(job_id: str):
         out["result"] = j["result"]
     if j["status"] == "error":
         out["error"] = j["error"]
+        out["retry"] = j.get("retry", False)
     return out
 
 
