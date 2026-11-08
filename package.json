@@ -1,0 +1,15 @@
+{
+  "name": "wifwheel",
+  "version": "1.0.0",
+  "description": "",
+  "scripts": {
+    "compile": "node contracts/compile.js",
+    "test": "python -m pytest contracts/test_wifwheel.py -q"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "solc": "0.8.24"
+  },
+  "private": true
+}
