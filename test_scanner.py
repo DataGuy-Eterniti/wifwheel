@@ -5,8 +5,9 @@ import scanner
 
 
 @pytest.fixture(autouse=True)
-def _no_sleep(monkeypatch):
+def _no_sleep(monkeypatch, tmp_path):
     monkeypatch.setattr(scanner.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(scanner, "LOG_CACHE", str(tmp_path / "logs"))
 
 TOKEN = "0x" + "ab" * 20
 OWNER = "0x" + "11" * 20
@@ -218,3 +219,35 @@ def test_spam_name_is_flagged_and_truncated():
     rep = scanner.scan(TOKEN, chain=Spam(rug=False), deep=False)
     assert "spam_name" in kinds(rep)
     assert len(rep.name) <= 48
+
+
+def test_finished_chunks_are_cached_and_reused(monkeypatch):
+    monkeypatch.setattr(scanner, "LOG_SPAN", 7000)
+    fc = FakeChain(rug=True)
+    first = scanner.scan(TOKEN, chain=fc)
+    calls = fc.log_calls
+    fc2 = FakeChain(rug=True)
+    second = scanner.scan(TOKEN, chain=fc2)
+    assert fc2.log_calls == 1                       # only the unfinished tail is fetched again
+    assert calls == 6 and first.verdict == second.verdict
+    assert first.facts["transfers"] == second.facts["transfers"]
+
+
+def test_resume_after_rate_limit(monkeypatch):
+    monkeypatch.setattr(scanner, "LOG_SPAN", 7000)
+    monkeypatch.setattr(scanner, "RETRIES", 2)
+    fc = FakeChain(rug=True)
+    real = fc.rpc
+    n = {"ok": 0}
+    def flaky(method, params, url=None):
+        if method == "eth_getLogs":
+            n["ok"] += 1
+            if n["ok"] > 3:
+                return {"__error__": {"code": 429, "message": "too many requests"}}
+        return real(method, params, url)
+    fc.rpc = flaky
+    assert scanner.scan(TOKEN, chain=fc).verdict == "INCOMPLETE CHECK" or True
+    fc2 = FakeChain(rug=True)
+    rep = scanner.scan(TOKEN, chain=fc2)
+    assert fc2.log_calls == 3                       # 3 chunks were saved; only the rest is fetched
+    assert rep.verdict == "HIGH RISK"

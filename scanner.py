@@ -47,7 +47,8 @@ EARLY_BLOCKS = 50
 LAUNCH_WINDOW = int(os.getenv("LAUNCH_WINDOW", "600"))   # blocks after trading opens (~1 minute)
 BRANDS = ("usdt", "usdc", "bnb", "xrp", "solana", "tron", "dogecoin", "coinbase", "binance", "ethereum", "bitcoin",
           "robinhood", "tether", "chainlink", "uniswap", "tokenized stock", "xstock", "ondo")
-RETRIES = int(os.getenv("RPC_RETRIES", "8"))                                    # ~5 seconds after the first transfer at 0.1 s blocks
+RETRIES = int(os.getenv("RPC_RETRIES", "10"))
+LOG_CACHE = os.getenv("LOG_CACHE_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "logs"))                                    # ~5 seconds after the first transfer at 0.1 s blocks
 
 TRANSFER = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 ZERO = "0x" + "0" * 40
@@ -177,7 +178,7 @@ class Chain:
                     mid = (a + b) // 2
                     stack += [(mid + 1, b), (a, mid)]
                     break
-                time.sleep(min(20, 1.5 * 2 ** attempt) if rate else 1.5 * (attempt + 1))
+                time.sleep(min(30, 2 * 2 ** attempt) if rate else 1.5 * (attempt + 1))
             else:
                 return None, msg[:200]
             time.sleep(0.25)   # be gentle with the free public RPC
@@ -257,30 +258,63 @@ def check_contract(c: Chain, addr, rep: Report):
     return True
 
 
+def _chunk_path(addr, start, end):
+    return os.path.join(LOG_CACHE, addr, f"{start}-{end}.json") if LOG_CACHE else None
+
+
+def _chunk_load(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def _chunk_save(path, rows):
+    if not path:
+        return
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(rows, f, separators=(",", ":"))
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
 def load_transfers(c: Chain, addr, rep: Report):
+    """Every Transfer of the token, read from the RPC in LOG_SPAN chunks. Finished chunks (fully below the
+    latest block) never change, so they are saved to disk: retries resume and later scans only fetch new blocks."""
     latest = c.block_number()
     if latest is None:
         rep.not_checked.append("Transfer history (RPC unavailable)")
         return None
-    logs = []
+    rows = []
     start = 0
     while start <= latest:
         end = min(latest, start + LOG_SPAN - 1)
-        chunk, err = c.logs(addr, start, end)
-        if chunk is None:
-            rep.not_checked.append(f"Transfer history (RPC error at blocks {start}-{end}: {err})")
-            rep.facts["incomplete"] = True
-            return None
-        logs.extend(chunk)
+        full = end == start + LOG_SPAN - 1          # a complete, immutable chunk
+        path = _chunk_path(addr, start, end) if full else None
+        cached = _chunk_load(path) if path else None
+        if cached is None:
+            chunk, err = c.logs(addr, start, end)
+            if chunk is None:
+                rep.not_checked.append(f"Transfer history (RPC error at blocks {start}-{end}: {err}). "
+                                       "Progress is saved; running the check again continues from here.")
+                rep.facts["incomplete"] = True
+                return None
+            cached = []
+            for lg in chunk:
+                t = lg.get("topics") or []
+                if len(t) < 3:
+                    continue
+                cached.append(["0x" + t[1][-40:].lower(), "0x" + t[2][-40:].lower(), str(int(lg.get("data") or "0x0", 16)),
+                               int(lg["blockNumber"], 16), lg.get("transactionHash"), int(lg.get("logIndex") or "0x0", 16)])
+            if path:
+                _chunk_save(path, cached)
+        rows.extend({"from": f, "to": t, "value": int(v), "block": b, "tx": tx, "i": i} for f, t, v, b, tx, i in cached)
         start = end + 1
-    rows = []
-    for lg in logs:
-        t = lg.get("topics") or []
-        if len(t) < 3:
-            continue
-        rows.append({"from": "0x" + t[1][-40:].lower(), "to": "0x" + t[2][-40:].lower(),
-                     "value": int(lg.get("data") or "0x0", 16), "block": int(lg["blockNumber"], 16),
-                     "tx": lg.get("transactionHash"), "i": int(lg.get("logIndex") or "0x0", 16)})
     rows.sort(key=lambda r: (r["block"], r["i"]))
     rep.facts["transfers"] = len(rows)
     return rows
