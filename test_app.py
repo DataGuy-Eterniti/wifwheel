@@ -11,6 +11,7 @@ TX = "0x" + "cd" * 32
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setattr(appmod, "CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(appmod, "USED_FILE", str(tmp_path / "used.txt"))
     monkeypatch.setattr(appmod, "WIFWHEEL", "0x" + "ee" * 20)
     appmod.used_txs.clear(); appmod.jobs.clear(); appmod._hits.clear()
     calls = []
@@ -89,3 +90,13 @@ def test_incomplete_deep_scan_frees_payment_and_is_not_cached(client, monkeypatc
     assert j["status"] == "error" and j["retry"] is True
     assert appmod.cache_get(TOKEN, True) is None
     assert client.post("/api/deep", json={"address": TOKEN, "tx": TX}).status_code == 200   # same payment retries
+
+
+def test_used_payments_survive_restart(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(appmod, "verify_payment", lambda tx, t: (True, ""))
+    client.post("/api/deep", json={"address": TOKEN, "tx": TX})
+    assert TX.lower() in open(appmod.USED_FILE).read()
+
+
+def test_healthz(client):
+    assert client.get("/healthz").json() == {"ok": True}

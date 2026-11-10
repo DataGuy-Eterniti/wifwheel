@@ -1,0 +1,8 @@
+.env
+.git
+node_modules
+data
+contracts
+__pycache__
+*.zip
+.github

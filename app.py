@@ -55,7 +55,12 @@ CHECK_PAID = _topic("CheckPaid(address,address,uint256,uint256,uint256)")
 
 app = FastAPI(title="WifWheel")
 jobs = {}                 # job id -> {"status", "address", "result", "error", "started"}
-used_txs = set()          # payment transactions already redeemed
+USED_FILE = os.path.join(HERE, "data", "used_txs.txt")
+try:
+    with open(USED_FILE, encoding="utf-8") as _f:
+        used_txs = {ln.strip() for ln in _f if ln.strip()}   # payment transactions already redeemed
+except OSError:
+    used_txs = set()
 _lock = threading.Lock()
 _hits = defaultdict(deque)
 
@@ -133,9 +138,19 @@ def verify_payment(tx, token):
     return False, "That transaction did not pay for a check of this token."
 
 
+def _save_used():
+    try:
+        os.makedirs(os.path.dirname(USED_FILE), exist_ok=True)
+        with open(USED_FILE, "w", encoding="utf-8") as f:
+            f.write("\n".join(sorted(used_txs)))
+    except OSError:
+        pass
+
+
 def _release(tx):
     with _lock:
         used_txs.discard(tx.lower())
+        _save_used()
 
 
 def _deep_worker(job_id, addr, tx):
@@ -157,6 +172,11 @@ def _deep_worker(job_id, addr, tx):
 @app.get("/", include_in_schema=False)
 def index():
     return FileResponse(os.path.join(HERE, "static", "index.html"))
+
+
+@app.get("/healthz", include_in_schema=False)
+def healthz():
+    return {"ok": True}
 
 
 @app.get("/api/config")
@@ -202,6 +222,7 @@ async def deep(request: Request):
         if tx.lower() in used_txs:
             raise HTTPException(409, "This payment has already been used.")
         used_txs.add(tx.lower())
+        _save_used()
     job_id = uuid.uuid4().hex[:12]
     cached = cache_get(addr, True)
     if cached:
