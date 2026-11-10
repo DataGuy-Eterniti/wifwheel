@@ -408,14 +408,26 @@ def analyse_insiders(c: Chain, addr, rows, rep: Report):
     biggest = max(insiders, key=insiders.get)
     rep.facts.update(trading_opened_block=open_block, launch_insiders=len(insiders),
                      launch_insider_share=round(share, 4), launch_insiders_sold=round(sold, 4))
+    keys = {f.key for f in rep.findings}
+    liq = rep.facts.get("liquidity_usd")
+    collapsed = bool(keys & {"no_pool", "dead_market"}) or (liq is not None and liq < 10_000)
+    healthy = not collapsed and liq is not None and liq >= 25_000
+    spread = (rep.facts.get("top10_wallet_share") or 0) < 0.25
     if share >= 0.25:
-        rep.findings.append(Finding("insider_launch", "high" if share >= 0.5 else "medium",
-                                    "Insiders grabbed the supply at launch",
-                                    f"Within about a minute of trading opening, {len(insiders)} wallets held {share:.0%} of the supply.",
-                                    _link("block", open_block)))
-        if sold >= 0.8:
-            rep.findings.append(Finding("insiders_sold", "high", "Those wallets have sold out",
-                                        f"They have since sold or moved {sold:.0%} of it, the pattern of a rug pull. Largest: {biggest}.",
+        if healthy and spread:
+            rep.findings.append(Finding("insider_launch", "low", "Launch was concentrated, since spread out",
+                                        f"About a minute after trading opened, {len(insiders)} wallets held {share:.0%} of the supply. "
+                                        f"It has since spread to {rep.facts.get('holders', 'many')} holders and the market is still liquid.",
+                                        _link("block", open_block)))
+        else:
+            rep.findings.append(Finding("insider_launch", "high" if share >= 0.5 else "medium",
+                                        "Insiders grabbed the supply at launch",
+                                        f"Within about a minute of trading opening, {len(insiders)} wallets held {share:.0%} of the supply.",
+                                        _link("block", open_block)))
+        if sold >= 0.8 and collapsed:
+            rep.findings.append(Finding("insiders_sold", "high", "Those wallets sold out and the market collapsed",
+                                        f"They have since sold or moved {sold:.0%} of it, and the market is now "
+                                        f"{'dead' if 'dead_market' in keys else 'nearly empty'}: the pattern of a rug pull. Largest: {biggest}.",
                                         _link("address", biggest)))
 
 

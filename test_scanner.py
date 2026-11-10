@@ -191,6 +191,8 @@ class RuggedChain(FakeChain):
             t.append((POOL, w(200 + i), 10, 9500 + i * 50, f"0xr{i}"))  # retail bag holders
         return t
 
+    healthy = False
+
     def call(self, to, data):
         if data == "0x8da5cb5b":
             return "0x" + "0" * 64
@@ -200,6 +202,13 @@ class RuggedChain(FakeChain):
         if a == TOKEN:
             return "0x6080" + "6340c10f19" + "00"
         return super()._code(a)
+
+    def dex(self, token):
+        if self.healthy:   # deep liquidity and live trading, like $WIF
+            return [{"chainId": "robinhood", "liquidity": {"usd": 137000}, "volume": {"h24": 25000},
+                     "pairCreatedAt": 1_700_000_000_000, "url": "https://dex/x"}]
+        return [{"chainId": "robinhood", "liquidity": {"usd": 5700}, "volume": {"h24": 0},
+                 "pairCreatedAt": 1_700_000_000_000, "url": "https://dex/x"}]
 
 
 def test_rugged_token_is_caught_from_history():
@@ -251,3 +260,12 @@ def test_resume_after_rate_limit(monkeypatch):
     rep = scanner.scan(TOKEN, chain=fc2)
     assert fc2.log_calls == 3                       # 3 chunks were saved; only the rest is fetched
     assert rep.verdict == "HIGH RISK"
+
+
+def test_concentrated_launch_with_healthy_market_is_not_a_rug():
+    fc = RuggedChain(rug=False)
+    fc.healthy = True
+    rep = scanner.scan(TOKEN, chain=fc)
+    assert rep.verdict == "NO MAJOR RED FLAGS FOUND", [(f.key, f.severity) for f in rep.findings]
+    assert "insiders_sold" not in kinds(rep)
+    assert any(f.key == "insider_launch" and f.severity == "low" for f in rep.findings)
