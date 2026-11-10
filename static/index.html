@@ -40,7 +40,7 @@
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 22px; margin-top: 18px; }
   .card h2 { font: 700 20px "Space Grotesk", sans-serif; margin: 0 0 12px; }
   .vhead { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
-  .tname { font: 700 22px "Space Grotesk", sans-serif; } .taddr { color: var(--muted); font: 13px ui-monospace, monospace; word-break: break-all; }
+  .tname { font: 700 22px "Space Grotesk", sans-serif; overflow-wrap: anywhere; } .taddr { color: var(--muted); font: 13px ui-monospace, monospace; word-break: break-all; }
   .verdict { font: 700 22px "Space Grotesk", sans-serif; padding: 8px 14px; border-radius: 12px; }
   .v-high { background: rgba(240,109,109,.14); color: var(--high); } .v-caution { background: rgba(242,184,75,.14); color: var(--med); }
   .v-ok { background: rgba(93,211,158,.13); color: var(--ok); }
@@ -178,6 +178,7 @@ function render(rep) {
     [f.holders != null ? Number(f.holders).toLocaleString() : "–", "holders"], [f.transfers != null ? Number(f.transfers).toLocaleString() : "–", "transfers"],
     [f.liquidity_usd != null ? "$" + Number(f.liquidity_usd).toLocaleString() : "–", "liquidity"],
     [pct(f.top10_wallet_share), "held by top 10 wallets"], [f.early_buyers ?? "–", "wallets in first ~5 s"],
+    ...(f.launch_insider_share != null ? [[pct(f.launch_insider_share), "grabbed by insiders at launch"]] : []),
   ];
   const findings = rep.findings.length ? rep.findings.map(x => `
     <div class="finding"><div class="sev ${x.severity}">${esc(x.severity)}</div>

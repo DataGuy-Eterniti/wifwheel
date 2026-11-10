@@ -174,3 +174,47 @@ def test_persistent_rate_limit_marks_check_incomplete(monkeypatch):
     rep = scanner.scan(TOKEN, chain=fc)
     assert rep.verdict == "INCOMPLETE CHECK"
     assert rep.facts.get("incomplete") is True
+
+
+class RuggedChain(FakeChain):
+    """After the rug: insiders bought 70% when trading opened, then sold it all into the pool.
+    Today's holder list looks spread out; only the history shows it."""
+
+    def _build(self):
+        t = [(ZERO, LAUNCHER, 1000, 100, "0xmint"), (LAUNCHER, POOL, 1000, 200, "0xpool")]
+        for i in range(1, 8):
+            t.append((POOL, w(i), 100, 210 + i, f"0xi{i}"))          # 7 insiders take 700 in the first minute
+        for i in range(1, 8):
+            t.append((w(i), POOL, 100, 9000 + i, f"0xs{i}"))         # ...and dump it later
+        for i in range(1, 40):
+            t.append((POOL, w(200 + i), 10, 9500 + i * 50, f"0xr{i}"))  # retail bag holders
+        return t
+
+    def call(self, to, data):
+        if data == "0x8da5cb5b":
+            return "0x" + "0" * 64
+        return super().call(to, data)
+
+    def _code(self, a):
+        if a == TOKEN:
+            return "0x6080" + "6340c10f19" + "00"
+        return super()._code(a)
+
+
+def test_rugged_token_is_caught_from_history():
+    rep = scanner.scan(TOKEN, chain=RuggedChain(rug=False))
+    assert {"insider_launch", "insiders_sold"} <= kinds(rep), [(f.key, f.severity) for f in rep.findings]
+    assert rep.verdict == "HIGH RISK"
+    assert rep.facts["launch_insider_share"] == 0.7
+
+
+def test_spam_name_is_flagged_and_truncated():
+    class Spam(FakeChain):
+        def call(self, to, data):
+            if data == "0x06fdde03":
+                txt = "USDt BNB USDC XRP Solana TRON Dogecoin Coinbase tokenized stock".encode()
+                return "0x" + "20".rjust(64, "0") + hex(len(txt))[2:].rjust(64, "0") + txt.hex().ljust(192, "0")
+            return super().call(to, data)
+    rep = scanner.scan(TOKEN, chain=Spam(rug=False), deep=False)
+    assert "spam_name" in kinds(rep)
+    assert len(rep.name) <= 48

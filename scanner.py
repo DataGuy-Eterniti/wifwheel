@@ -44,6 +44,9 @@ DEXSCREENER = "https://api.dexscreener.com/latest/dex/tokens/"
 TIMEOUT = 40
 LOG_SPAN = int(os.getenv("LOG_SPAN", "10000000"))   # public RPC limit per eth_getLogs
 EARLY_BLOCKS = 50
+LAUNCH_WINDOW = int(os.getenv("LAUNCH_WINDOW", "600"))   # blocks after trading opens (~1 minute)
+BRANDS = ("usdt", "usdc", "bnb", "xrp", "solana", "tron", "dogecoin", "coinbase", "binance", "ethereum", "bitcoin",
+          "robinhood", "tether", "chainlink", "uniswap", "tokenized stock", "xstock", "ondo")
 RETRIES = int(os.getenv("RPC_RETRIES", "8"))                                    # ~5 seconds after the first transfer at 0.1 s blocks
 
 TRANSFER = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
@@ -210,8 +213,15 @@ def check_contract(c: Chain, addr, rep: Report):
                                     "There is no token contract here. It may be a wallet or the wrong network.",
                                     _link("address", addr)))
         return False
-    rep.name = _decode_string(c.call(addr, "0x06fdde03"))
-    rep.symbol = _decode_string(c.call(addr, "0x95d89b41"))
+    name = _decode_string(c.call(addr, "0x06fdde03")) or ""
+    symbol = _decode_string(c.call(addr, "0x95d89b41")) or ""
+    brands = [b for b in BRANDS if b in name.lower()]
+    if len(name) > 60 or len(brands) >= 3:
+        rep.findings.append(Finding("spam_name", "high", "Name stuffed with other brands",
+                                    f"The token's name is {len(name)} characters long and mentions {len(brands)} other well-known assets. "
+                                    "Spam and impersonation tokens do this to show up in searches.", _link("token", addr)))
+    rep.name = name if len(name) <= 48 else name[:45].rstrip() + "…"
+    rep.symbol = symbol if len(symbol) <= 16 else symbol[:15] + "…"
     dec = c.call(addr, "0x313ce567")
     sup = c.call(addr, "0x18160ddd")
     rep.facts["decimals"] = int(dec, 16) if dec and dec != "0x" else 18
@@ -326,6 +336,53 @@ def analyse_launch(c: Chain, addr, rows, contracts, rep: Report):
                                     f"{len(buyers)} wallets received tokens within about 5 seconds of launch, a common sign of insiders or bots.",
                                     _link("block", launch)))
     return launcher
+
+
+def analyse_insiders(c: Chain, addr, rows, rep: Report):
+    """What happened when trading opened: how much of the supply wallets grabbed in the first minute,
+    and whether they have since sold it. A rug looks clean afterwards; this is where the evidence stays."""
+    supply = rep.facts.get("total_supply")
+    if not rows or not supply:
+        return
+    head = rows[:3000]
+    seen = list(({r["to"] for r in head} | {r["from"] for r in head}) - DEAD)[:300]
+    contracts = _contract_set(c, seen)
+    checked = set(seen)
+    # trading opens when tokens first move into or out of a contract (a pool, or a launchpad curve)
+    opener = next((r for r in head if r["to"] in contracts or r["from"] in contracts), None)
+    if not opener:
+        return
+    open_block = opener["block"]
+    end = open_block + LAUNCH_WINDOW
+    at_open, now = defaultdict(int), defaultdict(int)
+    for r in rows:
+        for b in ((at_open, now) if r["block"] <= end else (now,)):
+            if r["from"] != ZERO:
+                b[r["from"]] -= r["value"]
+            b[r["to"]] += r["value"]
+    cand = {a: v for a, v in at_open.items() if v / supply >= 0.005 and a not in DEAD and a not in contracts}
+    extra = [a for a in cand if a not in checked]
+    if extra:
+        contracts |= _contract_set(c, extra[:100])
+    insiders = {a: v for a, v in cand.items() if a not in contracts}
+    if not insiders:
+        return
+    held = sum(insiders.values())
+    share = held / supply
+    left = sum(max(0, now[a]) for a in insiders)
+    sold = 1 - left / held
+    biggest = max(insiders, key=insiders.get)
+    rep.facts.update(trading_opened_block=open_block, launch_insiders=len(insiders),
+                     launch_insider_share=round(share, 4), launch_insiders_sold=round(sold, 4))
+    if share >= 0.25:
+        rep.findings.append(Finding("insider_launch", "high" if share >= 0.5 else "medium",
+                                    "Insiders grabbed the supply at launch",
+                                    f"Within about a minute of trading opening, {len(insiders)} wallets held {share:.0%} of the supply.",
+                                    _link("block", open_block)))
+        if sold >= 0.8:
+            rep.findings.append(Finding("insiders_sold", "high", "Those wallets have sold out",
+                                        f"They have since sold or moved {sold:.0%} of it, the pattern of a rug pull. Largest: {biggest}.",
+                                        _link("address", biggest)))
 
 
 def analyse_clusters(c: Chain, rows, wallets, contracts, launcher, rep: Report):
@@ -450,10 +507,18 @@ def check_market(c: Chain, addr, rep: Report):
     if not pairs:
         rep.findings.append(Finding("no_pool", "medium", "No trading pool found",
                                     "There is no visible market for this token, so you may not be able to sell it.", ""))
-    elif liq < 5_000:
+    elif liq < 10_000:
         rep.findings.append(Finding("thin_liquidity", "medium", "Very little liquidity",
                                     f"Only about ${liq:,.0f} is in its pools. A small sell can move the price a lot.",
                                     pairs[0].get("url", "")))
+    if pairs:
+        vol = sum(float((p.get("volume") or {}).get("h24") or 0) for p in pairs)
+        created = min((p.get("pairCreatedAt") or 0) for p in pairs) / 1000
+        rep.facts["volume_24h_usd"] = round(vol, 2)
+        if vol < 100 and created and time.time() - created > 3 * 86400:
+            rep.findings.append(Finding("dead_market", "medium", "Trading has died",
+                                        f"Only ${vol:,.0f} traded in the last 24 hours. Tokens that rugged often look like this.",
+                                        pairs[0].get("url", "")))
 
 
 # ------------------------------------------------------------------ scoring
@@ -491,6 +556,7 @@ def scan(address: str, chain: Chain = None, deep: bool = True) -> Report:
             if rows is not None:
                 wallets, contracts = analyse_holders(c, addr, rows, rep)
                 launcher = analyse_launch(c, addr, rows, contracts, rep)
+                analyse_insiders(c, addr, rows, rep)
                 analyse_clusters(c, rows, wallets, contracts, launcher, rep)
                 analyse_launcher(c, launcher, rep)
         else:
